@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  linux-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/restore_assets.py
+      - run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg libegl1 libxkbcommon0
+          pip install -r requirements.txt pytest
+      - run: python -m pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
   macos:
     runs-on: macos-14   # Apple Silicon (arm64) runner
     steps:
