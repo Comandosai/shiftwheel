@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+.pytest_cache/
+.venv/
+e2e_*_out/
+
+# binary assets are restored from *.b64 by scripts/restore_assets.py
+dragshift/assets/dragshift.icns
+dragshift/assets/dragshift.ico
+dragshift/assets/dragshift.png
