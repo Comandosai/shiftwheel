@@ -53,8 +53,9 @@ def test_compress_extract_trim_concat_args():
     assert t[t.index("-ss") + 1] == "1.000" and t[t.index("-to") + 1] == "2.500"
     with pytest.raises(ValueError):
         media.build_trim_args("v", "o", 3, 1)
-    lst = media.build_concat_list(["/tmp/it's.mp4"])
-    assert lst == "file '/tmp/it'\\''s.mp4'\n"
+    p = Path("/tmp/it's.mp4").resolve()  # /tmp -> /private/tmp on macOS
+    lst = media.build_concat_list([str(p)])
+    assert lst == "file '" + str(p).replace("'", "'\\''") + "'\n"
 
 
 def test_missing_ffmpeg(monkeypatch, tmp_path):
