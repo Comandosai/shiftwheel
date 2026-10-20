@@ -1,0 +1,62 @@
+name: Build macOS app (unsigned, Apple Silicon)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-14   # Apple Silicon (arm64) runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Restore binary assets
+        run: python scripts/restore_assets.py
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+          brew install ffmpeg   # only for tests; NOT bundled into the app
+
+      - name: Run tests (incl. real ffmpeg conversions)
+        run: python -m pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build ShiftWheel.app
+        run: pyinstaller ShiftWheel.spec --noconfirm
+
+      - name: Smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          file dist/ShiftWheel.app/Contents/MacOS/ShiftWheel
+          dist/ShiftWheel.app/Contents/MacOS/ShiftWheel --selftest
+
+      - name: Ad-hoc sign (no Apple ID needed)
+        run: codesign --force --deep --sign - dist/ShiftWheel.app
+
+      - name: Build DMG + zip
+        run: |
+          mkdir -p dmg && cp -R dist/ShiftWheel.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname ShiftWheel -srcfolder dmg -ov -format UDZO dist/ShiftWheel-arm64.dmg
+          ditto -c -k --keepParent dist/ShiftWheel.app dist/ShiftWheel-arm64.app.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiftWheel-macos-arm64
+          path: |
+            dist/ShiftWheel-arm64.dmg
+            dist/ShiftWheel-arm64.app.zip
