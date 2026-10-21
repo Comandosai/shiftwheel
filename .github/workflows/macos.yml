@@ -1,4 +1,4 @@
-name: Build macOS app (unsigned, Apple Silicon)
+name: Build ShiftWheel (macOS arm64 + Windows x64, unsigned)
 
 on:
   push:
@@ -79,3 +79,48 @@ jobs:
           path: |
             dist/ShiftWheel-arm64.dmg
             dist/ShiftWheel-arm64.app.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Restore binary assets
+        run: python scripts/restore_assets.py
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+          choco install ffmpeg -y --no-progress   # only for tests; NOT bundled
+
+      - name: Run tests (incl. real ffmpeg conversions)
+        run: python -m pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build ShiftWheel (folder)
+        run: pyinstaller ShiftWheel.spec --noconfirm
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process -FilePath dist\ShiftWheel\ShiftWheel.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Self-test failed ($($p.ExitCode))" }
+          "Self-test passed"
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\ShiftWheel -DestinationPath dist\ShiftWheel-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiftWheel-windows-x64
+          path: dist/ShiftWheel-windows-x64.zip
