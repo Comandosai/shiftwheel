@@ -1,9 +1,9 @@
 """Video / audio via an external ffmpeg binary (ShiftWheel addition).
 
 ffmpeg is NOT linked into the app: we only run it as a separate process.
-Lookup order: $SHIFTWHEEL_FFMPEG, a binary bundled next to the app
-(Contents/Resources/ffmpeg or the PyInstaller data dir), Homebrew
-(/opt/homebrew/bin, /usr/local/bin), then $PATH.
+Lookup order: %SHIFTWHEEL_FFMPEG%/$SHIFTWHEEL_FFMPEG, a binary bundled with the app
+(PyInstaller data dir ffmpeg/ffmpeg[.exe]), Homebrew (macOS) or winget/choco/scoop
+(Windows), then PATH.
 
 The argument builders are pure functions (no I/O) so they can be unit-tested
 on any OS."""
@@ -29,14 +29,37 @@ COMPRESS_PRESETS = {"High": (23, None, 160), "Medium": (28, 1080, 128), "Small":
 
 
 # ---------------------------------------------------------------- locate ffmpeg
+IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+EXE = "ffmpeg.exe" if IS_WIN else "ffmpeg"
+
+
+def _platform_paths(env=os.environ, is_win: bool = IS_WIN) -> list[Path]:
+    """Well-known install locations (Homebrew on macOS; winget/choco/scoop on Windows)."""
+    if not is_win:
+        return [Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")]
+    out: list[Path] = []
+    la, home = env.get("LOCALAPPDATA"), env.get("USERPROFILE")
+    if la:
+        out.append(Path(la) / "Microsoft" / "WinGet" / "Links" / "ffmpeg.exe")
+        out += sorted((Path(la) / "Microsoft" / "WinGet" / "Packages").glob("*FFmpeg*/*/bin/ffmpeg.exe"))
+    pd = env.get("ProgramData") or "C:\\ProgramData"
+    out.append(Path(pd) / "chocolatey" / "bin" / "ffmpeg.exe")
+    if home:
+        out.append(Path(home) / "scoop" / "shims" / "ffmpeg.exe")
+    pf = env.get("ProgramFiles") or "C:\\Program Files"
+    out += [Path(pf) / "ffmpeg" / "bin" / "ffmpeg.exe", Path("C:/ffmpeg/bin/ffmpeg.exe")]
+    return out
+
+
 def _candidates() -> list[Path]:
     c: list[Path] = []
     env = os.environ.get("SHIFTWHEEL_FFMPEG")
     if env:
         c.append(Path(env))
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    c += [base / "ffmpeg" / "ffmpeg", base.parent / "Resources" / "ffmpeg" / "ffmpeg"]
-    c += [Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")]
+    c += [base / "ffmpeg" / EXE, base.parent / "Resources" / "ffmpeg" / EXE]
+    c += _platform_paths()
     w = shutil.which("ffmpeg")
     if w:
         c.append(Path(w))
@@ -45,15 +68,23 @@ def _candidates() -> list[Path]:
 
 def find_ffmpeg() -> str | None:
     for p in _candidates():
-        if p.is_file() and os.access(p, os.X_OK):
+        if p.is_file() and (IS_WIN or os.access(p, os.X_OK)):
             return str(p)
     return None
+
+
+def install_hint() -> str:
+    if IS_WIN:
+        return "ffmpeg not found. Install it with:  winget install Gyan.FFmpeg"
+    if IS_MAC:
+        return "ffmpeg not found. Install it with:  brew install ffmpeg"
+    return "ffmpeg not found. Install it with your package manager (e.g. apt install ffmpeg)"
 
 
 def require_ffmpeg() -> str:
     f = find_ffmpeg()
     if not f:
-        raise UserError("ffmpeg not found. Install it with:  brew install ffmpeg")
+        raise UserError(install_hint())
     return f
 
 
@@ -122,7 +153,8 @@ def build_trim_args(src: str, out: str, start: float, end: float) -> list[str]:
 
 def build_concat_list(paths: list[str]) -> str:
     """Contents of an ffmpeg concat-demuxer list file."""
-    return "".join("file '" + str(Path(p).resolve()).replace("'", "'\\''") + "'\n" for p in paths)
+    # forward slashes work for ffmpeg on every OS and avoid backslash-escape issues on Windows
+    return "".join("file '" + Path(p).resolve().as_posix().replace("'", "'\\''") + "'\n" for p in paths)
 
 
 def build_concat_args(list_file: str, out: str) -> list[str]:
@@ -135,7 +167,9 @@ def _run(args: list[str], out: Path) -> list[Path]:
     exe = require_ffmpeg()
     tmp = out.with_name(out.stem + ".part" + out.suffix)
     args = args[:-1] + [str(tmp)]
-    r = subprocess.run([exe, *args], capture_output=True, text=True)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0  # no console flash
+    r = subprocess.run([exe, *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       creationflags=flags)
     if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
         tmp.unlink(missing_ok=True)
         tail = (r.stderr or "").strip().splitlines()[-3:]
