@@ -55,12 +55,12 @@ def test_compress_extract_trim_concat_args():
         media.build_trim_args("v", "o", 3, 1)
     p = Path("/tmp/it's.mp4").resolve()  # /tmp -> /private/tmp on macOS
     lst = media.build_concat_list([str(p)])
-    assert lst == "file '" + str(p).replace("'", "'\\''") + "'\n"
+    assert lst == "file '" + p.as_posix().replace("'", "'\\''") + "'\n"
 
 
 def test_missing_ffmpeg(monkeypatch, tmp_path):
     monkeypatch.setattr(media, "_candidates", lambda: [tmp_path / "nope"])
-    with pytest.raises(Exception, match="brew install ffmpeg"):
+    with pytest.raises(Exception, match="ffmpeg not found"):
         media.require_ffmpeg()
 
 
@@ -110,3 +110,18 @@ def test_real_audio_convert(tmp_path):
     for t in ("MP3", "M4A"):
         assert media.convert(w, t)[0].stat().st_size > 0
     assert not list(tmp_path.glob("*.part*"))
+
+
+def test_windows_ffmpeg_locations(tmp_path):
+    env = {"LOCALAPPDATA": str(tmp_path / "la"), "USERPROFILE": str(tmp_path / "home"),
+           "ProgramData": str(tmp_path / "pd")}
+    pkg = tmp_path / "la" / "Microsoft" / "WinGet" / "Packages" / "Gyan.FFmpeg_x" / "ffmpeg-7.1-full_build" / "bin"
+    pkg.mkdir(parents=True)
+    (pkg / "ffmpeg.exe").write_bytes(b"")
+    paths = [str(p) for p in media._platform_paths(env, is_win=True)]
+    assert str(tmp_path / "la" / "Microsoft" / "WinGet" / "Links" / "ffmpeg.exe") in paths
+    assert str(pkg / "ffmpeg.exe") in paths
+    assert str(tmp_path / "pd" / "chocolatey" / "bin" / "ffmpeg.exe") in paths
+    assert str(tmp_path / "home" / "scoop" / "shims" / "ffmpeg.exe") in paths
+    assert all(p.endswith("ffmpeg.exe") for p in paths)
+    assert media._platform_paths({}, is_win=False)[0].name == "ffmpeg"
