@@ -37,6 +37,18 @@ R_HUB = 50          # hub radius
 GAP_DEG = 3.2
 CORNER = 10
 
+# Default look: "Comandos Light" (cream / ink / lime, COMANDOS light design tokens).
+# SHIFTWHEEL_THEME=glass restores the original liquid-glass rendering.
+import os as _os
+THEME = _os.environ.get("SHIFTWHEEL_THEME", "comandos").strip().lower()
+CL_BG = QColor("#f6f7ef")         # tray disc
+CL_CARD = QColor("#fcfcf6")       # petals
+CL_INK = QColor("#16130f")        # text, hub, hovered outline
+CL_MUTED = QColor("#5a4f44")      # tool captions
+CL_LIME = QColor("#d9fc67")       # accent: hovered petal, hub ring, hub hint
+CL_LINE = QColor(38, 28, 20, 28)  # tray outline
+CL_EDGE = QColor(38, 28, 20, 41)  # petal outline
+
 
 def sector_path(c: QPointF, r0: float, r1: float, a0: float, a1: float) -> QPainterPath:
     """Annular sector between angles a0..a1 (degrees, Qt convention: 0 = 3 o'clock, CCW)."""
@@ -146,6 +158,8 @@ class RadialMenu(QWidget):
         self._serial += 1
         self.liquid = {}
         try:
+            if THEME != "glass":
+                raise RuntimeError("flat theme: no screen capture needed")
             if sys.platform == "darwin":
                 # macOS captures "below the drag window": the drag picture never gets in
                 raw = glass.grab_screen(tl.x(), tl.y(), SIZE, SIZE)
@@ -438,6 +452,10 @@ class RadialMenu(QWidget):
         p.scale(s, s)
         p.translate(-c)
 
+        if THEME != "glass":
+            self._paint_comandos(p, c)
+            return
+
         items = self.items
         n = len(items)
         img = self.liquid.get(n) if n else (self.liquid.get(4) or self.liquid.get(7))
@@ -575,4 +593,87 @@ class RadialMenu(QWidget):
             f.setLetterSpacing(QFont.AbsoluteSpacing, 0.9)
             p.setFont(f)
             self._text(p, QRectF(pt.x() - 42, pt.y() - 12, 84, 24), it.label, col, shadow_col)
+        p.restore()
+
+
+    # ------------------------------------------------------------ Comandos Light theme
+    def _paint_comandos(self, p: QPainter, c: QPointF):
+        """Flat and calm: cream petals with hairline borders, the hovered petal turns lime and
+        pops out 5 px, a solid ink hub with a lime ring. Same look as the web demo."""
+        items = self.items
+        n = len(items)
+        p.setPen(Qt.NoPen)
+        sh = QRadialGradient(c + QPointF(0, 6), R_OUT + 22)
+        sh.setColorAt(0.80, QColor(22, 19, 15, 46))
+        sh.setColorAt(1.0, QColor(22, 19, 15, 0))
+        p.setBrush(sh)
+        p.drawEllipse(c + QPointF(0, 6), R_OUT + 22, R_OUT + 22)
+        p.setBrush(CL_BG)
+        p.setPen(QPen(CL_LINE, 1))
+        p.drawEllipse(c, R_OUT + 6, R_OUT + 6)
+
+        rot = (1 - self._swap) * -22
+        for i, it in enumerate(items):
+            a0, a1 = angles(n, i)
+            h = self.spring[i] if i < len(self.spring) else 0.0
+            mid = math.radians((a0 + a1) / 2)
+            push = 5 * h
+            off = QPointF(push * math.cos(mid), -push * math.sin(mid))
+            fill = QColor(int(CL_CARD.red() + (CL_LIME.red() - CL_CARD.red()) * h),
+                          int(CL_CARD.green() + (CL_LIME.green() - CL_CARD.green()) * h),
+                          int(CL_CARD.blue() + (CL_LIME.blue() - CL_CARD.blue()) * h))
+            p.setBrush(fill)
+            p.setPen(QPen(CL_INK, 1.2) if h > 0.5 else QPen(CL_EDGE, 1))
+            p.drawPath(sector_path(c + off, R_IN, R_OUT, a0, a1))
+            self._cl_label(p, c + off, it, (a0 + a1) / 2 + rot, (R_IN + R_OUT) / 2, h)
+        if not n and self.paths:
+            self._paint_unsupported(p, c, CL_INK, CL_MUTED, None)
+
+        p.setBrush(CL_INK)
+        p.setPen(QPen(CL_LIME, 2))
+        p.drawEllipse(c, R_HUB - 4, R_HUB - 4)
+        hov = items[self.hover] if 0 <= self.hover < len(items) else None
+        if hov is not None:
+            top, sub = hov.label, (hov.hint or "")
+        else:
+            top = self.hub_text
+            if len(self.ring_names) > 1:
+                sub = "⇧ " + self.ring_names[(self.ring_idx + 1) % len(self.ring_names)].upper()
+            else:
+                sub = self.ring_names[self.ring_idx].upper() if self.ring_names else ""
+        f = QFont(ui_family(True))
+        f.setPixelSize(13)
+        f.setBold(True)
+        p.setFont(f)
+        self._text(p, QRectF(c.x() - R_HUB + 8, c.y() - 20, 2 * R_HUB - 16, 18), top, CL_BG, None)
+        f.setPixelSize(8 if len(sub) > 12 else 9)
+        f.setBold(False)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.5)
+        p.setFont(f)
+        self._text(p, QRectF(c.x() - R_HUB + 10, c.y() + 1, 2 * R_HUB - 20, 30), sub, CL_LIME, None,
+                   Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap)
+
+    def _cl_label(self, p: QPainter, c: QPointF, it: Item, ang: float, r: float, h: float):
+        rad = math.radians(ang)
+        pt = QPointF(c.x() + r * math.cos(rad), c.y() - r * math.sin(rad))
+        p.save()
+        p.setOpacity(p.opacity() * (0.25 + 0.75 * self._swap))
+        f = QFont(ui_family(True))
+        if it.glyph:
+            f.setPixelSize(18)
+            p.setFont(f)
+            self._text(p, QRectF(pt.x() - 30, pt.y() - 24, 60, 24), it.glyph, CL_INK, None,
+                       Qt.AlignHCenter | Qt.AlignBottom)
+            f.setPixelSize(10)
+            f.setBold(True)
+            f.setLetterSpacing(QFont.AbsoluteSpacing, 0.8)
+            p.setFont(f)
+            self._text(p, QRectF(pt.x() - 42, pt.y() + 1, 84, 16), it.label.upper(),
+                       CL_INK if h > 0.5 else CL_MUTED, None)
+        else:
+            f.setPixelSize(15)
+            f.setBold(True)
+            f.setLetterSpacing(QFont.AbsoluteSpacing, 0.6)
+            p.setFont(f)
+            self._text(p, QRectF(pt.x() - 42, pt.y() - 12, 84, 24), it.label, CL_INK, None)
         p.restore()
